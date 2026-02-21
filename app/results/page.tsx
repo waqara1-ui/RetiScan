@@ -1,12 +1,30 @@
-import type { Metadata } from "next"
-import { ResultsView } from "@/components/results-view"
+"use client"
 
-export const metadata: Metadata = {
-  title: "Report | RetinaScan",
-  description:
-    "View your AI-powered retinal disease screening report with annotated findings and risk assessment.",
-}
+import { ResultsView } from "@/components/results-view"
+import { useEffect, useState } from "react"
+import type { AnalysisResult } from "@/components/results-view"
 
 export default function ResultsPage() {
-  return <ResultsView />
+  const [data, setData] = useState<AnalysisResult | null>(null)
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("retinaAnalysis")
+      if (raw) {
+        const parsed = JSON.parse(raw) as AnalysisResult
+        setData(parsed)
+      }
+    } catch {
+      // Ignore
+    }
+  }, [])
+
+  return (
+    <ResultsView
+      findings={data?.findings}
+      riskCards={data?.riskCards}
+      imageUrl={data?.imageUrl}
+      summary={data?.summary}
+    />
+  )
 }

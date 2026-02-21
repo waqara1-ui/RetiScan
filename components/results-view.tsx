@@ -18,7 +18,7 @@ import { Progress } from "@/components/ui/progress"
 
 /* ---------- Types ---------- */
 
-interface Finding {
+export interface Finding {
   id: string
   label: string
   severity: "normal" | "mild" | "moderate" | "severe"
@@ -28,16 +28,28 @@ interface Finding {
   region: { x: number; y: number; r: number } // % of image
 }
 
-interface RiskCard {
+export interface RiskCard {
   condition: string
   risk: "low" | "moderate" | "elevated"
   score: number
   detail: string
 }
 
-/* ---------- Mock data ---------- */
+export interface AnalysisResult {
+  findings: Finding[]
+  riskCards: RiskCard[]
+  summary?: {
+    findingsCount?: number
+    abnormalCount?: number
+    normalCount?: number
+    analysisTimeSeconds?: number
+  }
+  imageUrl?: string | null
+}
 
-const findings: Finding[] = [
+/* ---------- Mock data (fallback) ---------- */
+
+const defaultFindings: Finding[] = [
   {
     id: "f1",
     label: "Microaneurysms Detected",
@@ -82,7 +94,7 @@ const findings: Finding[] = [
   },
 ]
 
-const riskCards: RiskCard[] = [
+const defaultRiskCards: RiskCard[] = [
   {
     condition: "Diabetic Retinopathy",
     risk: "moderate",
@@ -153,10 +165,45 @@ function riskColor(risk: RiskCard["risk"]) {
 
 /* ---------- Component ---------- */
 
-export function ResultsView() {
+interface ResultsViewProps {
+  findings?: Finding[]
+  riskCards?: RiskCard[]
+  imageUrl?: string | null
+  summary?: AnalysisResult["summary"]
+}
+
+export function ResultsView({
+  findings: findingsProp,
+  riskCards: riskCardsProp,
+  imageUrl: imageUrlProp,
+  summary: summaryProp,
+}: ResultsViewProps = {}) {
+  const [analysisData, setAnalysisData] = useState<AnalysisResult | null>(null)
+
+  useEffect(() => {
+    const stored = sessionStorage.getItem("retinaAnalysis")
+    if (stored) {
+      try {
+        setAnalysisData(JSON.parse(stored) as AnalysisResult)
+      } catch {
+        console.warn("Failed to parse stored retinaAnalysis")
+      }
+    }
+  }, [])
+
+  const findings =
+    analysisData?.findings ?? findingsProp ?? defaultFindings
+  const riskCards =
+    analysisData?.riskCards ?? riskCardsProp ?? defaultRiskCards
+  const imageUrl =
+    analysisData?.imageUrl ?? imageUrlProp ?? "/images/retina-sample.jpg"
+  const summary = analysisData?.summary ?? summaryProp
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
+  const imageUrlRef = useRef<string>(imageUrl)
+  imageUrlRef.current = imageUrl
   const [expandedFinding, setExpandedFinding] = useState<string | null>(
-    findings[0].id
+    findings[0]?.id ?? null
   )
 
   const drawAnnotations = useCallback(() => {
@@ -165,10 +212,12 @@ export function ResultsView() {
     const ctx = canvas.getContext("2d")
     if (!ctx) return
 
+    const requestedUrl = imageUrl
     const img = new window.Image()
-    img.crossOrigin = "anonymous"
-    img.src = "/images/retina-sample.jpg"
+    if (!requestedUrl.startsWith("data:")) img.crossOrigin = "anonymous"
+    img.src = requestedUrl
     img.onload = () => {
+      if (imageUrlRef.current !== requestedUrl) return
       canvas.width = img.width
       canvas.height = img.height
       ctx.drawImage(img, 0, 0)
@@ -221,7 +270,7 @@ export function ResultsView() {
         ctx.fillText(f.label, labelX, labelY + 4)
       })
     }
-  }, [])
+  }, [findings, imageUrl])
 
   useEffect(() => {
     drawAnnotations()
@@ -258,19 +307,21 @@ export function ResultsView() {
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4.5 w-4.5 text-warning" />
             <span className="text-sm font-semibold text-foreground">
-              2 findings require attention
+              {summary?.abnormalCount ?? findings.filter((f) => f.severity !== "normal").length}{" "}
+              findings require attention
             </span>
           </div>
           <div className="h-4 w-px bg-border/50" />
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-4.5 w-4.5 text-success" />
             <span className="text-sm text-muted-foreground">
-              2 areas normal
+              {summary?.normalCount ?? findings.filter((f) => f.severity === "normal").length} areas
+              normal
             </span>
           </div>
           <div className="h-4 w-px bg-border/50" />
           <span className="text-xs text-muted-foreground">
-            Analysis completed in 8.4 seconds
+            Analysis completed in {summary?.analysisTimeSeconds?.toFixed(1) ?? "—"} seconds
           </span>
         </div>
 

@@ -26,8 +26,15 @@ interface AnalysisStage {
 export function ScanInterface() {
   const [state, setState] = useState<ScanState>("idle")
   const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [stages, setStages] = useState<AnalysisStage[]>([])
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
+  const [analysisSummary, setAnalysisSummary] = useState<{
+    findingsCount: number
+    abnormalCount: number
+    analysisTimeSeconds: number
+  } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const router = useRouter()
 
@@ -35,6 +42,7 @@ export function ScanInterface() {
     if (!file.type.startsWith("image/")) return
     const url = URL.createObjectURL(file)
     setImageUrl(url)
+    setSelectedFile(file)
     setState("preview")
   }, [])
 
@@ -57,7 +65,9 @@ export function ScanInterface() {
   )
 
   const loadSampleImage = useCallback(() => {
+    sessionStorage.removeItem("retinaAnalysis")
     setImageUrl("/images/retina-sample.jpg")
+    setSelectedFile(null)
     setState("preview")
   }, [])
 
@@ -65,38 +75,100 @@ export function ScanInterface() {
     if (imageUrl && imageUrl.startsWith("blob:")) {
       URL.revokeObjectURL(imageUrl)
     }
+    sessionStorage.removeItem("retinaAnalysis")
     setImageUrl(null)
+    setSelectedFile(null)
     setState("idle")
     setStages([])
+    setAnalysisError(null)
+    setAnalysisSummary(null)
   }, [imageUrl])
 
-  const runAnalysis = useCallback(() => {
+  const runAnalysis = useCallback(async () => {
+    if (!imageUrl) return
+    sessionStorage.removeItem("retinaAnalysis")
     setState("analyzing")
+    setAnalysisError(null)
     const analysisStages = [
-      "Detecting optic disc...",
-      "Mapping vascular tree...",
-      "Measuring cup-to-disc ratio...",
-      "Scanning for microaneurysms...",
-      "Analyzing arteriole-to-venule ratio...",
-      "Evaluating nerve fiber layer...",
+      "Loading RETFound model...",
+      "Converting image for analysis...",
+      "Running diabetic retinopathy screening...",
       "Generating risk assessment...",
+      "Complete",
     ]
-
     setStages(analysisStages.map((label) => ({ label, done: false })))
 
-    analysisStages.forEach((_, index) => {
-      setTimeout(() => {
-        setStages((prev) =>
-          prev.map((s, i) => (i <= index ? { ...s, done: true } : s))
-        )
-        if (index === analysisStages.length - 1) {
-          setTimeout(() => {
-            setState("complete")
-          }, 600)
+    const animateStages = () => {
+      analysisStages.forEach((_, index) => {
+        setTimeout(() => {
+          setStages((prev) =>
+            prev.map((s, i) => (i <= index ? { ...s, done: true } : s))
+          )
+        }, (index + 1) * 800)
+      })
+    }
+    animateStages()
+
+    const startTime = Date.now()
+    try {
+      let imageBlob: Blob
+      if (selectedFile) {
+        imageBlob = selectedFile
+      } else {
+        const res = await fetch(imageUrl)
+        imageBlob = await res.blob()
+      }
+
+      const formData = new FormData()
+      formData.append("image", imageBlob)
+
+      const res = await fetch("/api/analyze", {
+        method: "POST",
+        body: formData,
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        const msg =
+          data?.error || data?.detail || `Analysis failed (${res.status})`
+        setAnalysisError(msg)
+        setState("preview")
+        return
+      }
+
+      const elapsed = (Date.now() - startTime) / 1000
+      // Store image as data URL so it survives navigation (blob URLs can fail on results page)
+      const imageUrlToStore = await new Promise<string>((resolve) => {
+        if (imageUrl.startsWith("blob:") && imageBlob) {
+          const reader = new FileReader()
+          reader.onload = () => resolve((reader.result as string) ?? imageUrl)
+          reader.onerror = () => resolve(imageUrl)
+          reader.readAsDataURL(imageBlob)
+        } else {
+          resolve(imageUrl)
         }
-      }, (index + 1) * 700)
-    })
-  }, [])
+      })
+      const stored = {
+        findings: data.findings,
+        riskCards: data.riskCards,
+        summary: { ...data.summary, analysisTimeSeconds: elapsed },
+        imageUrl: imageUrlToStore,
+        timestamp: Date.now(),
+      }
+      sessionStorage.setItem("retinaAnalysis", JSON.stringify(stored))
+      setAnalysisSummary({
+        findingsCount: data.findings?.length ?? 0,
+        abnormalCount: data.summary?.abnormalCount ?? 0,
+        analysisTimeSeconds: elapsed,
+      })
+      setState("complete")
+    } catch (err) {
+      setAnalysisError(
+        err instanceof Error ? err.message : "Network or server error"
+      )
+      setState("preview")
+    }
+  }, [imageUrl, selectedFile])
 
   const goToResults = useCallback(() => {
     router.push("/results")
@@ -226,12 +298,17 @@ export function ScanInterface() {
                 />
               </div>
 
+              {analysisError && (
+                <div className="mt-4 w-full rounded-lg border border-danger/30 bg-danger/5 px-4 py-3 text-sm text-danger">
+                  {analysisError}
+                </div>
+              )}
               <div className="mt-6 flex gap-3">
                 <Button variant="outline" onClick={resetScan} className="gap-2">
                   <X className="h-4 w-4" />
                   Remove
                 </Button>
-                <Button onClick={runAnalysis} className="gap-2">
+                <Button onClick={() => runAnalysis()} className="gap-2">
                   <Eye className="h-4 w-4" />
                   Analyze Image
                 </Button>
@@ -319,17 +396,25 @@ export function ScanInterface() {
               <div className="mt-8 grid w-full grid-cols-3 gap-3">
                 <div className="rounded-lg border border-border/50 bg-card p-4 text-center">
                   <AlertCircle className="mx-auto h-5 w-5 text-warning" />
-                  <p className="mt-2 text-lg font-bold text-foreground">2</p>
+                  <p className="mt-2 text-lg font-bold text-foreground">
+                    {analysisSummary?.findingsCount ?? 1}
+                  </p>
                   <p className="text-xs text-muted-foreground">Findings</p>
                 </div>
                 <div className="rounded-lg border border-border/50 bg-card p-4 text-center">
                   <Eye className="mx-auto h-5 w-5 text-primary" />
-                  <p className="mt-2 text-lg font-bold text-foreground">5</p>
-                  <p className="text-xs text-muted-foreground">Areas Scanned</p>
+                  <p className="mt-2 text-lg font-bold text-foreground">
+                    {analysisSummary?.abnormalCount ?? 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Require Attention
+                  </p>
                 </div>
                 <div className="rounded-lg border border-border/50 bg-card p-4 text-center">
                   <CheckCircle2 className="mx-auto h-5 w-5 text-success" />
-                  <p className="mt-2 text-lg font-bold text-foreground">8.4s</p>
+                  <p className="mt-2 text-lg font-bold text-foreground">
+                    {(analysisSummary?.analysisTimeSeconds ?? 0).toFixed(1)}s
+                  </p>
                   <p className="text-xs text-muted-foreground">
                     Analysis Time
                   </p>
