@@ -1,4 +1,6 @@
 /**
+ * Will use this document to extract image, process it, and send to ML
+ * This is the backend of our app. The frontend never touches the ML directly, it only talks to this API
  * Retinal analysis API — GPT-4o Vision (primary) or RETFound via HF
  * Diabetic retinopathy grade: 0=none, 1=mild, 2=moderate, 3=severe, 4=proliferative
  * Note: HF legacy api-inference.huggingface.co returns 410 Gone (retired).
@@ -8,6 +10,9 @@ import { NextRequest, NextResponse } from "next/server"
 import sharp from "sharp"
 
 const RETFOUND_MODEL = "bitfount/RETFound_DR_IDRID"
+//base url for hugging face serverless interface API (calling model for predictions) 
+//The model we use "RETFOUND MODEL"
+//using a pretrained Hugging Face model called RETFound (for diabetic retinopathy grading).
 const HF_INFERENCE_URL = `https://api-inference.huggingface.co/models/${RETFOUND_MODEL}`
 
 const HF_410_MESSAGE =
@@ -211,15 +216,15 @@ export async function POST(req: NextRequest) {
 
     const hfJson = await hfRes.json()
     return NextResponse.json(formatResponse(hfJson))
-  } catch (e) {
-    console.error("Analyze API error:", e)
-    return NextResponse.json(
-      {
-        error: e instanceof Error ? e.message : "Analysis failed",
-        code: "INTERNAL_ERROR",
-      },
-      { status: 500 }
-    )
+  } catch (e: any) {
+      console.error("OPENAI ERROR:", e)
+      return NextResponse.json(
+        {
+          error: "GPT-4o Vision analysis failed.",
+          detail: e?.message ?? e?.toString(),
+        },
+        { status: 502 }
+      )
   }
 }
 

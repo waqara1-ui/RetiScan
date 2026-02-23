@@ -1,4 +1,12 @@
 "use client"
+//where frontend connects to backend
+//note to self:
+/*User selcts image
+image is sotred in state 
+send image to backend using fetch
+backend returns with AI results
+save results is sessionStorage
+user will be redirected to the results page */
 
 import { useState, useRef, useCallback } from "react"
 import Image from "next/image"

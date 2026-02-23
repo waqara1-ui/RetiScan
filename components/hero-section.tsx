@@ -1,8 +1,9 @@
+//this page is for the UI of the top half of the website
 import Link from "next/link"
 import Image from "next/image"
 import { ArrowRight, Shield, Zap, Activity } from "lucide-react"
 import { Button } from "@/components/ui/button"
-
+/*use span classname= to apply like color, font change, or background with CSS */
 export function HeroSection() {
   return (
     <section className="relative overflow-hidden pt-16">
@@ -14,7 +15,7 @@ export function HeroSection() {
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border/60 bg-secondary/50 px-4 py-1.5">
           <span className="h-1.5 w-1.5 rounded-full bg-primary" />
           <span className="text-xs font-medium text-muted-foreground">
-            Built by CareTech at UCI
+            Developed by Amina Waqar, Bareera Gulkhair, Mukund Ummadisetti, Hanin Barakat
           </span>
         </div>
 
@@ -26,7 +27,7 @@ export function HeroSection() {
         <p className="mt-6 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg">
           Upload a retinal fundus image and our AI instantly screens for early
           signs of diabetic retinopathy, hypertension, and neurological
-          conditions -- all from a single photograph of the eye.
+          conditions - all from a single photograph of the eye.
         </p>
 
         <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row">
@@ -74,7 +75,7 @@ export function HeroSection() {
           </div>
         </div>
 
-        {/* Hero image */}
+        {/* Hero image (retinol scan image) */}
         <div className="relative mt-16 w-full max-w-2xl">
           <div className="absolute -inset-4 rounded-3xl bg-primary/5 blur-2xl" />
           <div className="relative overflow-hidden rounded-2xl border border-border/50 bg-card">
@@ -86,7 +87,7 @@ export function HeroSection() {
               className="w-full object-cover"
               priority
             />
-            {/* Overlay scan indicator */}
+            {/* Overlay scan indicator with retinol scan image in background */}
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="flex items-center gap-2 rounded-full border border-primary/30 bg-background/80 px-4 py-2 backdrop-blur-sm">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
