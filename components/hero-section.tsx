@@ -15,7 +15,7 @@ export function HeroSection() {
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border/60 bg-secondary/50 px-4 py-1.5">
           <span className="h-1.5 w-1.5 rounded-full bg-primary" />
           <span className="text-xs font-medium text-muted-foreground">
-            Developed by Amina Waqar, Bareera Gulkhair, Mukund Ummadisetti, Hanin Barakat
+            Developed by Amina Waqar, Bareera Gulraiz, Mukund Ummadisetti, Hanin Barakat
           </span>
         </div>
 

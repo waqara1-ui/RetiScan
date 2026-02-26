@@ -19,7 +19,7 @@ export function Footer() {
           advice.
         </p>
         <p className="text-xs text-muted-foreground/40">
-          CareTech at UCI &middot; 2026
+          UCEye Care Team; 2026
         </p>
       </div>
     </footer>

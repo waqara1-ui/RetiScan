@@ -39,15 +39,15 @@ def main():
     # Many HF image-classification models expose label names here:
     id2label = model.config.id2label if hasattr(model.config, "id2label") else None
     label = id2label.get(pred_idx, str(pred_idx)) if isinstance(id2label, dict) else str(pred_idx)
-
+    labels = [model.config.id2label[i] for i in range(len(model.config.id2label))]
     result = {
         "model": MODEL_ID,
         "class_index": pred_idx,
         "label": label,
         "confidence": float(probs[pred_idx].item()),
-        "probabilities": [float(p.item()) for p in probs]
+        "probabilities": [float(p.item()) for p in probs],
+        "labels": labels
     }
-
     print(json.dumps(result))
 
 if __name__ == "__main__":
