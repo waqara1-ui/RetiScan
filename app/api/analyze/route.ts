@@ -19,6 +19,7 @@ import { promisify } from "util";
 
 const execFileAsync = promisify(execFile);
 
+
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -39,9 +40,23 @@ export async function POST(req: Request) {
     await fs.writeFile(tmpPath, buffer);
 
     // Use the ML venv python so torch/transformers are available
+    // Cross-platform Python selection:
+    // - Local Windows dev (optional): use ml/.venv/Scripts/python.exe if it exists
+    // - Production/Linux (Docker/Railway): use python3 (installed in container)
     const projectRoot = process.cwd();
-    const pythonExe = path.join(projectRoot, "ml", ".venv", "Scripts", "python.exe");
     const scriptPath = path.join(projectRoot, "ml", "infer.py");
+
+    const winVenvPython = path.join(projectRoot, "ml", ".venv", "Scripts", "python.exe");
+
+    // If you want: allow override via env var (nice for deployment configs)
+    const pythonFromEnv = process.env.PYTHON_EXECUTABLE;
+
+    let pythonExe = "python3";
+    if (process.platform === "win32") {
+    pythonExe = pythonFromEnv ?? winVenvPython;
+    } else {
+    pythonExe = pythonFromEnv ?? "python3";
+    }
 
     const { stdout, stderr } = await execFileAsync(pythonExe, [scriptPath, tmpPath], {
       timeout: 120000,
@@ -56,7 +71,10 @@ export async function POST(req: Request) {
       console.warn("Python stderr:", stderr);
     }
 
-    const result = JSON.parse(stdout.trim());
+    // Try to parse the LAST JSON object printed to stdout
+    const lines = stdout.trim().split("\n");
+    const last = lines[lines.length - 1];
+    const result = JSON.parse(last);
 
     return NextResponse.json({
       ok: true,
