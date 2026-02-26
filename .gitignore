@@ -6,4 +6,23 @@ node_modules
 dist
 build
 .DS_Store
-*.log
+*.log# Python / ML (do not commit)
+ml/.venv/
+ml/__pycache__/
+ml/weights/
+ml/.cache/
+# Python / ML (do not commit)
+ml/.venv/
+ml/__pycache__/
+ml/weights/
+ml/.cache/
+# Python / ML local stuff
+ml/.venv/
+ml/weights/
+ml/__pycache__/
+**/__pycache__/
+*.pth
+*.pt
+*.safetensors
+
+# HuggingFace / Torch caches

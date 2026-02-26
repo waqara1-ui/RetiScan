@@ -1,3 +1,4 @@
+//scanner page 
 import type { Metadata } from "next"
 import { ScanInterface } from "@/components/scan-interface"
 

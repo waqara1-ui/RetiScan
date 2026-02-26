@@ -1,499 +1,377 @@
+//this filereads stored result from ML model which are returned as JSON
+//Will display risk categories, and health results
 "use client"
 
-import { useRef, useEffect, useState, useCallback } from "react"
+import Image from "next/image"
 import Link from "next/link"
-import {
-  Eye,
-  ArrowLeft,
-  Download,
-  AlertTriangle,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Info,
-  MapPin,
-} from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Progress } from "@/components/ui/progress"
+import { ArrowLeft, Eye, AlertCircle, CheckCircle2, Info } from "lucide-react"
 
-/* ---------- Types ---------- */
+export type RiskCard = {
+  title: string
+  status: string
+  score: number // 0..100 (UI only)
+  description?: string
+  isComingSoon?: boolean
 
-export interface Finding {
-  id: string
-  label: string
-  severity: "normal" | "mild" | "moderate" | "severe"
-  confidence: number
-  description: string
-  recommendation: string
-  region: { x: number; y: number; r: number } // % of image
+  probabilities?: number[] // 0..1
+  probabilityLabels?: string[] // display labels in correct order
 }
 
-export interface RiskCard {
-  condition: string
-  risk: "low" | "moderate" | "elevated"
-  score: number
-  detail: string
+export type Finding = {
+  title: string
+  severity?: string
+  confidence?: number // 0..100
+  details?: string
+  recommendation?: string
 }
 
-export interface AnalysisResult {
-  findings: Finding[]
-  riskCards: RiskCard[]
-  summary?: {
-    findingsCount?: number
-    abnormalCount?: number
-    normalCount?: number
-    analysisTimeSeconds?: number
+export type Summary = {
+  findingsCount?: number
+  abnormalCount?: number
+  analysisTimeSeconds?: number
+}
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n))
+}
+
+function prettySeconds(s?: number) {
+  if (typeof s !== "number") return "—"
+  return `${s.toFixed(1)}s`
+}
+
+// Convert labels like "no_dr" -> "No diabetic retinopathy"
+function prettyLabel(raw: string) {
+  const s = raw.replaceAll("_", " ").toLowerCase().trim()
+  if (s === "no dr" || s === "no diabetic retinopathy" || s === "no_dr") {
+    return "No diabetic retinopathy"
   }
-  imageUrl?: string | null
+  return s
+    .split(" ")
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ")
 }
 
-/* ---------- Mock data (fallback) ---------- */
+// Severity mapping (best-effort)
+function severityWeight(label: string): number {
+  const s = label.toLowerCase()
+  if (s.includes("no")) return 0
+  if (s.includes("mild")) return 1
+  if (s.includes("moderate")) return 2
+  if (s.includes("severe")) return 3
+  if (s.includes("prolifer")) return 4
+  return 0
+}
 
-const defaultFindings: Finding[] = [
-  {
-    id: "f1",
-    label: "Microaneurysms Detected",
-    severity: "mild",
-    confidence: 87,
-    description:
-      "2 small microaneurysms identified in the temporal region near the macula. These are early indicators of diabetic retinopathy (NPDR Stage 1).",
-    recommendation:
-      "Schedule a comprehensive dilated eye exam with an ophthalmologist within 6 months. Monitor blood glucose levels.",
-    region: { x: 58, y: 45, r: 8 },
-  },
-  {
-    id: "f2",
-    label: "Mild Arteriolar Narrowing",
-    severity: "mild",
-    confidence: 74,
-    description:
-      "Arteriole-to-venule ratio (AVR) measured at 0.63, slightly below the normal range of 0.67-0.75. This may indicate early hypertensive changes.",
-    recommendation:
-      "Have blood pressure checked. If not already monitored, consult your primary care physician for a cardiovascular assessment.",
-    region: { x: 35, y: 52, r: 10 },
-  },
-  {
-    id: "f3",
-    label: "Optic Disc Normal",
-    severity: "normal",
-    confidence: 94,
-    description:
-      "Cup-to-disc ratio measured at 0.3, within the normal range. Neuroretinal rim appears healthy with no signs of glaucomatous damage.",
-    recommendation: "No action required. Continue routine eye examinations.",
-    region: { x: 28, y: 48, r: 12 },
-  },
-  {
-    id: "f4",
-    label: "Macula Normal",
-    severity: "normal",
-    confidence: 91,
-    description:
-      "Foveal reflex is present. No exudates, edema, or drusen detected in the macular region.",
-    recommendation: "No action required.",
-    region: { x: 55, y: 50, r: 9 },
-  },
-]
+function severitySignalText(severityIndex: number) {
+  if (severityIndex >= 75) return "High severity signal"
+  if (severityIndex >= 40) return "Moderate severity signal"
+  return "Low severity signal"
+}
 
-const defaultRiskCards: RiskCard[] = [
-  {
-    condition: "Diabetic Retinopathy",
-    risk: "moderate",
-    score: 62,
-    detail:
-      "Mild NPDR (Stage 1) indicators found. Microaneurysms present in temporal region.",
-  },
-  {
-    condition: "Hypertensive Retinopathy",
-    risk: "moderate",
-    score: 48,
-    detail:
-      "Mild arteriolar narrowing detected. AVR below normal range suggesting early hypertensive changes.",
-  },
-  {
-    condition: "Glaucoma",
-    risk: "low",
-    score: 12,
-    detail:
-      "Cup-to-disc ratio and neuroretinal rim within normal limits. No elevated risk indicators.",
-  },
-  {
-    condition: "Age-Related Macular Degeneration",
-    risk: "low",
-    score: 8,
-    detail:
-      "No drusen, pigmentary changes, or geographic atrophy observed in macular region.",
-  },
-]
+// If predicted label implies non-zero severity but severityIndex is ~0, hide it (avoids confusion)
+function shouldShowSeverityIndex(predictedLabel: string, severityIndex: number) {
+  const s = predictedLabel.toLowerCase()
+  const predictedNonZero =
+    s.includes("mild") || s.includes("moderate") || s.includes("severe") || s.includes("prolifer")
+  if (predictedNonZero && severityIndex <= 5) return false
+  return true
+}
 
-/* ---------- Helpers ---------- */
-
-function severityColor(severity: Finding["severity"]) {
-  switch (severity) {
-    case "severe":
-      return { ring: "border-danger", text: "text-danger", bg: "bg-danger/10" }
-    case "moderate":
-      return {
-        ring: "border-chart-5",
-        text: "text-chart-5",
-        bg: "bg-chart-5/10",
-      }
-    case "mild":
-      return {
-        ring: "border-warning",
-        text: "text-warning",
-        bg: "bg-warning/10",
-      }
-    default:
-      return {
-        ring: "border-success",
-        text: "text-success",
-        bg: "bg-success/10",
-      }
+function consultAdvice(detected: boolean, predictedLabel: string) {
+  const s = predictedLabel.toLowerCase()
+  if (!detected) {
+    return "If you have no symptoms and this is just a routine check, urgent follow-up is usually not necessary. If you have vision changes, diabetes, or concerns, schedule an eye exam anyway."
   }
-}
-
-function riskColor(risk: RiskCard["risk"]) {
-  switch (risk) {
-    case "elevated":
-      return { text: "text-danger", bg: "bg-danger/10", bar: "bg-danger" }
-    case "moderate":
-      return { text: "text-warning", bg: "bg-warning/10", bar: "bg-warning" }
-    default:
-      return { text: "text-success", bg: "bg-success/10", bar: "bg-success" }
+  if (s.includes("mild")) {
+    return "Consider scheduling a routine follow-up eye exam, especially if you have diabetes. This is not urgent, but it’s worth confirming with a professional."
   }
-}
-
-/* ---------- Component ---------- */
-
-interface ResultsViewProps {
-  findings?: Finding[]
-  riskCards?: RiskCard[]
-  imageUrl?: string | null
-  summary?: AnalysisResult["summary"]
+  if (s.includes("moderate")) {
+    return "A follow-up with an eye-care professional is recommended. Moderate findings are often monitored and may require treatment planning depending on the clinical exam."
+  }
+  if (s.includes("severe") || s.includes("prolifer")) {
+    return "Follow-up is strongly recommended soon. Severe/proliferative categories can be associated with higher risk of vision complications and should be evaluated by an eye-care professional."
+  }
+  return "Consider a follow-up eye exam to confirm the result and discuss next steps."
 }
 
 export function ResultsView({
-  findings: findingsProp,
-  riskCards: riskCardsProp,
-  imageUrl: imageUrlProp,
-  summary: summaryProp,
-}: ResultsViewProps = {}) {
-  const [analysisData, setAnalysisData] = useState<AnalysisResult | null>(null)
+  findings,
+  riskCards,
+  imageUrl,
+  summary,
+}: {
+  findings?: Finding[]
+  riskCards?: RiskCard[]
+  imageUrl?: string
+  summary?: Summary
+}) {
+  const findingsCount = summary?.findingsCount ?? findings?.length ?? 0
+  const abnormalCount = summary?.abnormalCount ?? 0
+  const analysisTime = prettySeconds(summary?.analysisTimeSeconds)
 
-  useEffect(() => {
-    const stored = sessionStorage.getItem("retinaAnalysis")
-    if (stored) {
-      try {
-        setAnalysisData(JSON.parse(stored) as AnalysisResult)
-      } catch {
-        console.warn("Failed to parse stored retinaAnalysis")
-      }
+  const drCard = riskCards?.find((c) => c.title === "Diabetic Retinopathy")
+
+  const probs = drCard?.probabilities ?? []
+  const labels = drCard?.probabilityLabels ?? []
+
+  // Predicted class = label with highest probability
+  let predictedLabel = drCard?.status ?? "Unknown"
+  let predictedConfidencePct = "N/A"
+  let bestIdx = -1
+
+  if (probs.length && labels.length === probs.length) {
+    bestIdx = 0
+    for (let i = 1; i < probs.length; i++) {
+      if (probs[i] > probs[bestIdx]) bestIdx = i
     }
-  }, [])
+    predictedLabel = prettyLabel(labels[bestIdx])
+    predictedConfidencePct = `${(probs[bestIdx] * 100).toFixed(0)}%`
+  } else {
+    predictedLabel = drCard?.status ?? "Unknown"
+    if (typeof drCard?.score === "number") predictedConfidencePct = `${clamp(drCard.score, 0, 100)}%`
+  }
 
-  const findings =
-    analysisData?.findings ?? findingsProp ?? defaultFindings
-  const riskCards =
-    analysisData?.riskCards ?? riskCardsProp ?? defaultRiskCards
-  const imageUrl =
-    analysisData?.imageUrl ?? imageUrlProp ?? "/images/retina-sample.jpg"
-  const summary = analysisData?.summary ?? summaryProp
+  const detected = !predictedLabel.toLowerCase().includes("no")
 
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const imageUrlRef = useRef<string>(imageUrl)
-  imageUrlRef.current = imageUrl
-  const [expandedFinding, setExpandedFinding] = useState<string | null>(
-    findings[0]?.id ?? null
-  )
+  const severityDisplay = detected ? predictedLabel : "No diabetic retinopathy"
 
-  const drawAnnotations = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext("2d")
-    if (!ctx) return
-
-    const requestedUrl = imageUrl
-    const img = new window.Image()
-    if (!requestedUrl.startsWith("data:")) img.crossOrigin = "anonymous"
-    img.src = requestedUrl
-    img.onload = () => {
-      if (imageUrlRef.current !== requestedUrl) return
-      canvas.width = img.width
-      canvas.height = img.height
-      ctx.drawImage(img, 0, 0)
-
-      findings.forEach((f) => {
-        const cx = (f.region.x / 100) * img.width
-        const cy = (f.region.y / 100) * img.height
-        const r = (f.region.r / 100) * Math.min(img.width, img.height)
-        const colors = severityColor(f.severity)
-        const isAbnormal = f.severity !== "normal"
-
-        ctx.beginPath()
-        ctx.arc(cx, cy, r, 0, Math.PI * 2)
-        ctx.strokeStyle = isAbnormal
-          ? "rgba(234,179,8,0.8)"
-          : "rgba(74,222,128,0.5)"
-        ctx.lineWidth = isAbnormal ? 3 : 2
-        if (isAbnormal) {
-          ctx.setLineDash([8, 4])
-        } else {
-          ctx.setLineDash([])
-        }
-        ctx.stroke()
-        ctx.setLineDash([])
-
-        // Label
-        const labelX = cx + r + 8
-        const labelY = cy - 4
-        ctx.font = `bold ${Math.max(12, img.width * 0.018)}px Inter, system-ui, sans-serif`
-        const metrics = ctx.measureText(f.label)
-        const padding = 6
-        const labelHeight = 20
-
-        ctx.fillStyle = isAbnormal
-          ? "rgba(234,179,8,0.15)"
-          : "rgba(74,222,128,0.12)"
-        ctx.beginPath()
-        ctx.roundRect(
-          labelX - padding,
-          labelY - labelHeight + 2,
-          metrics.width + padding * 2,
-          labelHeight + padding,
-          4
-        )
-        ctx.fill()
-
-        ctx.fillStyle = isAbnormal
-          ? "rgba(234,179,8,0.95)"
-          : "rgba(74,222,128,0.8)"
-        ctx.fillText(f.label, labelX, labelY + 4)
-      })
+  // Severity index: expected value of severity level (0..4) mapped to 0..100
+  let severityIndex = 0
+  if (probs.length && labels.length === probs.length) {
+    let expected = 0
+    for (let i = 0; i < probs.length; i++) {
+      expected += probs[i] * severityWeight(labels[i])
     }
-  }, [findings, imageUrl])
+    severityIndex = Math.round((expected / 4) * 100) // 0..100
+  }
 
-  useEffect(() => {
-    drawAnnotations()
-  }, [drawAnnotations])
+  const severityText = severitySignalText(severityIndex)
+  const showSeverityIndex = shouldShowSeverityIndex(predictedLabel, severityIndex)
+
+  const advice = consultAdvice(detected, predictedLabel)
 
   return (
-    <div className="flex min-h-screen flex-col bg-background">
+    <div className="flex min-h-screen flex-col bg-gradient-to-b from-background via-background to-background/80">
       {/* Header */}
-      <header className="border-b border-border/50 bg-background/80 backdrop-blur-xl">
+      <header className="border-b border-border/60 bg-background/85 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
           <Link
-            href="/scan"
+            href="/"
             className="flex items-center gap-2 text-sm text-muted-foreground transition-colors hover:text-foreground"
           >
             <ArrowLeft className="h-4 w-4" />
-            New Scan
+            Back
           </Link>
+
           <div className="flex items-center gap-2">
             <Eye className="h-4 w-4 text-primary" />
-            <span className="text-sm font-semibold text-foreground">
-              Screening Report
-            </span>
+            <span className="text-sm font-semibold text-foreground">RetinaScan</span>
           </div>
-          <Button variant="outline" size="sm" className="gap-2">
-            <Download className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Export PDF</span>
-          </Button>
+
+          <Link href="/scan">
+            <Button variant="outline" size="sm" className="border-primary/30">
+              New Scan
+            </Button>
+          </Link>
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">
-        {/* Overall summary bar */}
-        <div className="mb-8 flex flex-wrap items-center gap-4 rounded-xl border border-border/50 bg-card p-4">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4.5 w-4.5 text-warning" />
-            <span className="text-sm font-semibold text-foreground">
-              {summary?.abnormalCount ?? findings.filter((f) => f.severity !== "normal").length}{" "}
-              findings require attention
-            </span>
-          </div>
-          <div className="h-4 w-px bg-border/50" />
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4.5 w-4.5 text-success" />
-            <span className="text-sm text-muted-foreground">
-              {summary?.normalCount ?? findings.filter((f) => f.severity === "normal").length} areas
-              normal
-            </span>
-          </div>
-          <div className="h-4 w-px bg-border/50" />
-          <span className="text-xs text-muted-foreground">
-            Analysis completed in {summary?.analysisTimeSeconds?.toFixed(1) ?? "—"} seconds
-          </span>
+      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
+        {/* Title */}
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            Retinal Screening Report
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This version provides a screening result for{" "}
+            <span className="font-medium text-foreground">diabetic retinopathy</span>{" "}
+            using a pretrained model. Other conditions shown below are planned and not computed yet.
+          </p>
         </div>
 
-        <div className="grid gap-8 lg:grid-cols-5">
-          {/* Left column: annotated image */}
-          <div className="lg:col-span-3">
-            <h2 className="mb-4 text-lg font-semibold text-foreground">
-              Annotated Retinal Image
-            </h2>
-            <div className="overflow-hidden rounded-xl border border-border/50 bg-card">
-              <canvas
-                ref={canvasRef}
-                className="w-full"
-                aria-label="Annotated retinal fundus image with disease markers highlighted"
-              />
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-4">
-              <div className="flex items-center gap-2">
-                <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-warning" />
-                <span className="text-xs text-muted-foreground">
-                  Abnormality
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="inline-block h-2.5 w-2.5 rounded-full border-2 border-success" />
-                <span className="text-xs text-muted-foreground">Normal</span>
-              </div>
-            </div>
+        {/* Summary cards */}
+        <div className="mt-6 grid grid-cols-3 gap-3">
+          <div className="rounded-xl border border-border/60 bg-card/90 p-4 text-center shadow-sm">
+            <AlertCircle className="mx-auto h-5 w-5 text-amber-400" />
+            <p className="mt-2 text-lg font-bold text-foreground">{findingsCount}</p>
+            <p className="text-xs text-muted-foreground">Findings</p>
           </div>
 
-          {/* Right column: risk cards */}
-          <div className="lg:col-span-2">
-            <h2 className="mb-4 text-lg font-semibold text-foreground">
-              Disease Risk Assessment
-            </h2>
-            <div className="space-y-3">
-              {riskCards.map((card) => {
-                const colors = riskColor(card.risk)
-                return (
+          <div className="rounded-xl border border-border/60 bg-card/90 p-4 text-center shadow-sm">
+            <Eye className="mx-auto h-5 w-5 text-sky-400" />
+            <p className="mt-2 text-lg font-bold text-foreground">{abnormalCount}</p>
+            <p className="text-xs text-muted-foreground">Require attention</p>
+          </div>
+
+          <div className="rounded-xl border border-border/60 bg-card/90 p-4 text-center shadow-sm">
+            <CheckCircle2 className="mx-auto h-5 w-5 text-emerald-400" />
+            <p className="mt-2 text-lg font-bold text-foreground">{analysisTime}</p>
+            <p className="text-xs text-muted-foreground">Analysis time</p>
+          </div>
+        </div>
+
+        {/* Main grid */}
+        <div className="mt-8 grid gap-6 lg:grid-cols-2">
+          {/* Image panel */}
+          <div className="rounded-2xl border border-border/60 bg-card/90 p-4 shadow-sm">
+            <h2 className="text-sm font-semibold text-foreground">Retinal Image</h2>
+            <div className="mt-3 overflow-hidden rounded-xl border border-border/60">
+              {imageUrl ? (
+                <Image
+                  src={imageUrl}
+                  alt="Retinal fundus image"
+                  width={900}
+                  height={650}
+                  className="w-full object-cover"
+                  unoptimized={imageUrl.startsWith("data:") || imageUrl.startsWith("blob:")}
+                />
+              ) : (
+                <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
+                  No image available
+                </div>
+              )}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              This model provides a screening classification and does not highlight lesions on the image.
+            </p>
+          </div>
+
+          {/* Results panel */}
+          <div className="rounded-2xl border border-border/60 bg-card/90 p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-foreground">Results Overview</h2>
+
+            {/* Clear summary */}
+            <div className="mt-4 rounded-2xl border border-primary/25 bg-gradient-to-br from-sky-500/15 via-background to-background p-5">
+              <p className="text-xs text-muted-foreground">Condition</p>
+            <p className="mt-1 text-base font-semibold text-foreground">
+              Diabetic Retinopathy
+            </p>
+
+            <p className="mt-4 text-xs text-muted-foreground">AI screening result</p>
+            <p className={`mt-1 text-2xl font-extrabold tracking-tight ${detected ? "text-rose-300" : "text-emerald-300"}`}>
+              {detected ? "Diabetic retinopathy detected" : "No diabetic retinopathy detected"}
+            </p>
+
+            {detected && (
+          <>
+            <p className="mt-4 text-xs text-muted-foreground">Severity (AI estimate)</p>
+            <p className="mt-1 text-2xl font-extrabold tracking-tight text-foreground">
+            {predictedLabel}
+           </p>
+          </>
+              )}
+            </div>
+
+            {/* What does this mean */}
+            <details className="mt-4 rounded-2xl border border-border/60 bg-background/40 p-4">
+              <summary className="cursor-pointer text-sm font-semibold text-foreground">
+                What does this mean?
+              </summary>
+
+              <div className="mt-3 space-y-3 text-sm text-muted-foreground">
+                <p>
+                  {detected
+                    ? "This screening suggests signs consistent with diabetic retinopathy in this image."
+                    : "This screening did not find signs consistent with diabetic retinopathy in this image."}
+                </p>
+
+                {detected && (
+                <p>
+                  The severity shown above (e.g., Mild/Moderate/Severe) is an AI estimate based on the image.
+                </p>
+                )}
+
+              <p className="font-medium text-foreground">
+                This is not a diagnosis. For a real medical decision, you should consult an eye-care professional for an exam.
+              </p>
+          </div>
+      </details>
+
+            {/* Severity bar (optional) */}
+            {showSeverityIndex ? (
+              <div className="mt-5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-muted-foreground">Severity signal</span>
+                  <span className="text-foreground">{severityIndex}/100</span>
+                </div>
+                <div className="mt-2 h-2.5 w-full rounded-full bg-white/10">
                   <div
-                    key={card.condition}
-                    className="rounded-xl border border-border/50 bg-card p-4"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-semibold text-foreground">
-                        {card.condition}
-                      </span>
-                      <span
-                        className={`rounded-md px-2.5 py-1 text-xs font-medium capitalize ${colors.bg} ${colors.text}`}
-                      >
-                        {card.risk}
-                      </span>
-                    </div>
-                    <div className="mt-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-muted-foreground">
-                          Risk Score
+                    className="h-2.5 rounded-full bg-gradient-to-r from-emerald-400 via-sky-400 to-violet-400"
+                    style={{ width: `${clamp(severityIndex, 0, 100)}%` }}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  This bar reflects overall severity signal (low → high). It is not “percent chance you have the disease.”
+                </p>
+              </div>
+            ) : null}
+
+            {/* Probability bars */}
+            {probs.length && labels.length === probs.length ? (
+              <div className="mt-6 space-y-2">
+                <p className="text-sm font-semibold text-foreground">Class probabilities</p>
+                <p className="text-xs text-muted-foreground">
+                  These bars show how strongly the model matched each category. The highest bar is the predicted result.
+                </p>
+
+                {probs.map((p, i) => {
+                  const pct = clamp(Math.round(p * 100), 0, 100)
+                  const lbl = prettyLabel(labels[i] ?? `Class ${i}`)
+                  const isTop = i === bestIdx
+                  return (
+                    <div key={`${lbl}-${i}`} className="space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className={isTop ? "text-foreground font-semibold" : "text-muted-foreground"}>
+                          {lbl}
+                          {isTop ? " (predicted)" : ""}
                         </span>
-                        <span className="font-mono text-xs font-semibold text-foreground">
-                          {card.score}/100
-                        </span>
+                        <span className="text-foreground">{pct}%</span>
                       </div>
-                      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-secondary">
+                      <div className="h-2.5 w-full rounded-full bg-white/10">
                         <div
-                          className={`h-full rounded-full transition-all duration-700 ${colors.bar}`}
-                          style={{ width: `${card.score}%` }}
+                          className={`h-2.5 rounded-full ${isTop ? "bg-emerald-400" : "bg-sky-400/60"}`}
+                          style={{ width: `${pct}%` }}
                         />
                       </div>
                     </div>
-                    <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                      {card.detail}
-                    </p>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            {/* Coming soon */}
+            <div className="mt-8 space-y-3">
+              {["Hypertensive Retinopathy", "Glaucoma", "Age-Related Macular Degeneration"].map((t) => (
+                <div key={t} className="rounded-xl border border-border/60 bg-background/40 p-4">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-foreground">{t}</p>
+                    <span className="text-xs rounded-full border border-border/60 px-2 py-0.5 text-muted-foreground">
+                      Coming soon
+                    </span>
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Detailed findings */}
-        <div className="mt-10">
-          <h2 className="mb-4 text-lg font-semibold text-foreground">
-            Detailed Findings
-          </h2>
-          <div className="space-y-3">
-            {findings.map((finding) => {
-              const isExpanded = expandedFinding === finding.id
-              const colors = severityColor(finding.severity)
-              const isAbnormal = finding.severity !== "normal"
-              return (
-                <div
-                  key={finding.id}
-                  className={`overflow-hidden rounded-xl border bg-card transition-colors ${
-                    isAbnormal ? "border-border/50" : "border-border/30"
-                  }`}
-                >
-                  <button
-                    onClick={() =>
-                      setExpandedFinding(isExpanded ? null : finding.id)
-                    }
-                    className="flex w-full items-center gap-4 px-5 py-4 text-left"
-                  >
-                    <div
-                      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${colors.bg}`}
-                    >
-                      {isAbnormal ? (
-                        <AlertTriangle className={`h-4 w-4 ${colors.text}`} />
-                      ) : (
-                        <CheckCircle2 className={`h-4 w-4 ${colors.text}`} />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <span className="text-sm font-semibold text-foreground">
-                        {finding.label}
-                      </span>
-                      <div className="mt-0.5 flex items-center gap-3">
-                        <span
-                          className={`text-xs font-medium capitalize ${colors.text}`}
-                        >
-                          {finding.severity}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {finding.confidence}% confidence
-                        </span>
-                      </div>
-                    </div>
-                    {isExpanded ? (
-                      <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    ) : (
-                      <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    )}
-                  </button>
-
-                  {isExpanded && (
-                    <div className="border-t border-border/30 px-5 py-4">
-                      <div className="flex items-start gap-2">
-                        <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <p className="text-sm leading-relaxed text-muted-foreground">
-                          {finding.description}
-                        </p>
-                      </div>
-                      <div className="mt-4 flex items-start gap-2 rounded-lg bg-primary/5 px-4 py-3">
-                        <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
-                        <div>
-                          <span className="text-xs font-semibold text-primary">
-                            Recommendation
-                          </span>
-                          <p className="mt-1 text-sm leading-relaxed text-foreground">
-                            {finding.recommendation}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  <p className="mt-1 text-xs text-muted-foreground">Planned feature — not computed in this version.</p>
                 </div>
-              )
-            })}
+              ))}
+            </div>
           </div>
         </div>
 
         {/* Disclaimer */}
-        <div className="mt-10 rounded-xl border border-border/30 bg-secondary/20 p-5">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            <strong className="text-foreground">Disclaimer:</strong> This
-            screening is for educational and research purposes only. RetinaScan
-            is not FDA-approved and does not replace professional ophthalmic
-            examination. AI analysis may produce false positives or false
-            negatives. Always consult a licensed ophthalmologist or healthcare
-            provider for definitive diagnosis and treatment.
+        <div className="mt-8 rounded-2xl border border-border/60 bg-card/90 p-6 shadow-sm">
+          <h2 className="text-lg font-semibold text-foreground">Important note</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {detected
+              ? "The model detected patterns consistent with diabetic retinopathy at the severity shown above."
+              : "The model did not detect patterns consistent with diabetic retinopathy in this image."}{" "}
+            This is a screening demo and not medical advice. If you have symptoms or concerns, consult an eye-care
+            professional for a dilated eye exam.
           </p>
         </div>
       </main>
     </div>
   )
 }
+
+export default ResultsView

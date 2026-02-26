@@ -1,4 +1,12 @@
 "use client"
+//where frontend connects to backend
+//note to self:
+/*User selcts image
+image is sotred in state 
+send image to backend using fetch
+backend returns with AI results
+save results is sessionStorage
+user will be redirected to the results page */
 
 import { useState, useRef, useCallback } from "react"
 import Image from "next/image"
@@ -90,10 +98,10 @@ export function ScanInterface() {
     setState("analyzing")
     setAnalysisError(null)
     const analysisStages = [
-      "Loading RETFound model...",
-      "Converting image for analysis...",
-      "Running diabetic retinopathy screening...",
-      "Generating risk assessment...",
+      "Loading diabetic retinopathy model...",
+      "Preprocessing retinal image...",
+      "Running DR screening...",
+      "Calculating confidence scores...",
       "Complete",
     ]
     setStages(analysisStages.map((label) => ({ label, done: false })))
@@ -148,19 +156,42 @@ export function ScanInterface() {
           resolve(imageUrl)
         }
       })
-      const stored = {
-        findings: data.findings,
-        riskCards: data.riskCards,
-        summary: { ...data.summary, analysisTimeSeconds: elapsed },
-        imageUrl: imageUrlToStore,
-        timestamp: Date.now(),
-      }
-      sessionStorage.setItem("retinaAnalysis", JSON.stringify(stored))
-      setAnalysisSummary({
-        findingsCount: data.findings?.length ?? 0,
-        abnormalCount: data.summary?.abnormalCount ?? 0,
+      const labelRaw = (data.label ?? "").toString().toLowerCase()
+const confidence = typeof data.confidence === "number" ? data.confidence : null
+
+// Simple rule: moderate+ means "requires attention"
+const requiresAttention =
+  ["moderate", "severe", "proliferative"].includes(labelRaw) ? 1 : 0
+
+// Always 1 finding because we produced a screening classification
+const findingsCount = 1
+
+// Store a clean, new schema that matches local ML
+    const stored = {
+      source: data.source ?? "local-ml",
+      model: data.model,
+      prediction: {
+        label: labelRaw,
+        confidence,
+        classIndex: data.class_index,
+        probabilities: data.probabilities,
+      },
+      summary: {
+        findingsCount,
+        abnormalCount: requiresAttention,
         analysisTimeSeconds: elapsed,
-      })
+      },
+      imageUrl: imageUrlToStore,
+      timestamp: Date.now(),
+    }
+
+    sessionStorage.setItem("retinaAnalysis", JSON.stringify(stored))
+
+    setAnalysisSummary({
+      findingsCount,
+      abnormalCount: requiresAttention,
+      analysisTimeSeconds: elapsed,
+    })
       setState("complete")
     } catch (err) {
       setAnalysisError(
