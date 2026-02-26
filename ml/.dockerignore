@@ -1,0 +1,14 @@
+node_modules
+.next
+.git
+.gitignore
+
+ml/.venv
+ml/weights
+**/__pycache__
+*.pth
+*.pt
+*.safetensors
+
+.cache
+.DS_Store
