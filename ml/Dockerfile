@@ -1,29 +1,18 @@
-# ---- Base image with Node + Python ----
-FROM node:20-bookworm
+FROM python:3.10-slim
 
-# Install Python + pip
-RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
-
-# Set working dir
 WORKDIR /app
 
-# Copy package files first (better caching)
-COPY package.json package-lock.json* pnpm-lock.yaml* ./
+# System deps
+RUN apt-get update && apt-get install -y \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install Node deps
-RUN npm ci
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the app
+# Copy ML code
 COPY . .
 
-# Install Python deps for ML
-RUN python3 -m pip install --no-cache-dir -r ml/requirements.txt
-
-# Build Next.js
-RUN npm run build
-
-# Railway provides PORT; Next listens on it
-ENV NODE_ENV=production
-EXPOSE 3000
-
-CMD ["npm", "start"]
+# Default command (Railway doesn't need this but Docker requires one)
+CMD ["python", "infer.py"]
