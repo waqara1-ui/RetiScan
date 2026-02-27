@@ -33,6 +33,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "No image uploaded" }, { status: 400 });
     }
 
+    // TEMP: use hosted inference or placeholder for deployment
+    if (process.env.NODE_ENV === "production") {
+      return NextResponse.json({
+        ok: true,
+        source: "demo",
+        model: "RETFound (demo)",
+        label: "moderate",
+        confidence: 0.34,
+        probabilities: [0.1, 0.2, 0.34, 0.2, 0.16],
+        labels: ["No diabetic retinopathy", "Mild", "Moderate", "Severe", "Proliferative"]
+    });
+}
     // Save upload to a temp file
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
