@@ -3,6 +3,8 @@
 
 RetinaScan is a Next.js web app that lets a user upload a retinal scan image and receive an **AI screening result for diabetic retinopathy severity.**
 
+![RetinaScan Cover](public/images/RetinaScanCoverPage.png)
+
 This project supports early disease detection in healthcare, especially for conditions that can progress silently like diabetic retinopathy. It’s a great example of how AI can support clinicians by highlighting signals that may be easy to overlook and helping catch problems earlier.
 
 > **Important:** This project is a screening demo and **not medical advice**. For diagnosis or treatment decisions, consult a licensed eye-care professional.
