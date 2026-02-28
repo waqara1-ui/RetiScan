@@ -36,24 +36,24 @@ Coming soon (not computed yet)
 ## Repository structure
 
 
-RetinaScan/
-|__ app/ # Pages + backend API routes
-│ |__ page.tsx # Home page
-│ |__ scan/page.tsx # Scan page route
-│ |__ results/page.tsx # Results page route
-│ |__ api/analyze/route.ts # Server API endpoint (calls ML inference)
+RetinaScan/  
+|__ app/ # Pages + backend API routes  
+│ |__ page.tsx # Home page  
+│ |__ scan/page.tsx # Scan page route  
+│ |__ results/page.tsx # Results page route  
+│ |__ api/analyze/route.ts # Server API endpoint (calls ML inference)  
+│  
+|__ components/ # Reusable UI components  
+│ |__ scan-interface.tsx # Upload + calls /api/analyze, stores result  
+│ |__ results-view.tsx # Results UI (Detected Yes/No + severity)  
+│  
+|__ ml/ # Local ML inference  
+│ |__ infer.py # CLI inference (test model directly)  
+│ |__ model.py # Model utilities/loading  
+│ |__ requirements.txt # Python deps for inference  
 │
-|__ components/ # Reusable UI components
-│ |__ scan-interface.tsx # Upload + calls /api/analyze, stores result
-│ |__ results-view.tsx # Results UI (Detected Yes/No + severity)
-│
-|__ ml/ # Local ML inference
-│ |__ infer.py # CLI inference (test model directly)
-│ |__ model.py # Model utilities/loading
-│ |__ requirements.txt # Python deps for inference
-│
-|__ public/ # Static assets (images, icons, etc...)
-|__ README.md
+|__ public/ # Static assets (images, icons, etc...)  
+|__ README.md  
 
 ---
 
